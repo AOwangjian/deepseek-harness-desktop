@@ -75,4 +75,40 @@ describe('WindowsAdapter', () => {
     );
     expect(terminateTree).not.toHaveBeenCalled();
   });
+
+  it('still kills an owned PID when inspection is unavailable', async () => {
+    const terminateTree = vi.fn(async () => undefined);
+    const adapter = new WindowsAdapter({
+      app: {
+        setLoginItemSettings: vi.fn(),
+        getLoginItemSettings: vi.fn(() => ({ openAtLogin: false })),
+      },
+      inspectProcess: vi.fn(async () => null),
+      terminateTree,
+      notify: vi.fn(),
+      openPath: vi.fn(),
+      processExists: () => true,
+    });
+
+    await adapter.terminateOwnedProcessTree(record);
+    expect(terminateTree).toHaveBeenCalledExactlyOnceWith(record.pid);
+  });
+
+  it('does not kill when inspection is unavailable and the PID is gone', async () => {
+    const terminateTree = vi.fn(async () => undefined);
+    const adapter = new WindowsAdapter({
+      app: {
+        setLoginItemSettings: vi.fn(),
+        getLoginItemSettings: vi.fn(() => ({ openAtLogin: false })),
+      },
+      inspectProcess: vi.fn(async () => null),
+      terminateTree,
+      notify: vi.fn(),
+      openPath: vi.fn(),
+      processExists: () => false,
+    });
+
+    await adapter.terminateOwnedProcessTree(record);
+    expect(terminateTree).not.toHaveBeenCalled();
+  });
 });

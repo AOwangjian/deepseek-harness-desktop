@@ -22,7 +22,7 @@ export interface HarnessChildProcess
   readonly pid?: number;
   readonly stdout?: Readable | null;
   readonly stderr?: Readable | null;
-  kill(signal: 'SIGTERM'): boolean;
+  kill(signal: 'SIGTERM' | 'SIGKILL'): boolean;
 }
 
 export interface HarnessSpawnOptions {
@@ -328,7 +328,31 @@ export class HarnessProcess extends EventEmitter {
     }
 
     await this.terminateTree(ownedRecord);
-    await exitCompletion;
+    await Promise.resolve();
+    if (this.child !== child) {
+      await exitCompletion;
+      return { status: 'stopped', forced: true };
+    }
+
+    const forcedExit = await Promise.race([
+      exitCompletion.then(() => 'exited' as const),
+      this.wait(GRACEFUL_STOP_TIMEOUT_MS).then(() => 'timed-out' as const),
+    ]);
+    if (forcedExit === 'timed-out') {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // The local child handle may already be dead while the OS process remains.
+      }
+      await this.recordStore.deleteIfOwned(this.instanceId);
+      if (this.child === child) {
+        this.child = null;
+        this.ownedRecord = null;
+        this.exitCompletion = null;
+      }
+    } else {
+      await exitCompletion;
+    }
     return { status: 'stopped', forced: true };
   }
 

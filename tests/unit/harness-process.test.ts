@@ -199,8 +199,24 @@ describe('HarnessProcess', () => {
       status: 'stopped',
       forced: true,
     });
-    expect(wait).toHaveBeenCalledExactlyOnceWith(5_000);
+    expect(wait).toHaveBeenNthCalledWith(1, 5_000);
     expect(terminateTree).toHaveBeenCalledExactlyOnceWith(record);
+    expect(fixture.repository.getRecord()).toBeNull();
+  });
+
+  it('does not hang restart when the tree terminator cannot reap the child', async () => {
+    const process = controlledChild();
+    const wait = vi.fn(async () => undefined);
+    const terminateTree = vi.fn(async () => undefined);
+    const fixture = createManager({ child: process, wait, terminateTree });
+    await fixture.manager.start(18_765);
+
+    await expect(fixture.manager.stop()).resolves.toEqual({
+      status: 'stopped',
+      forced: true,
+    });
+    expect(wait).toHaveBeenCalledTimes(2);
+    expect(terminateTree).toHaveBeenCalledOnce();
     expect(fixture.repository.getRecord()).toBeNull();
   });
 

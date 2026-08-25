@@ -6,10 +6,11 @@ import { DesktopSettings } from './components/DesktopSettings';
 import { DesktopStatusBar } from './components/DesktopStatusBar';
 import { DiagnosticsView } from './components/DiagnosticsView';
 
-function StartingView() {
+function StartingView(props: { stopping?: boolean }) {
+  const label = props.stopping ? 'Stopping Harness…' : 'Starting Harness…';
   return (
-    <section className="desktop-panel" aria-label="Starting Harness">
-      <h1 aria-live="polite">Starting Harness…</h1>
+    <section className="desktop-panel" aria-label={label}>
+      <h1 aria-live="polite">{label}</h1>
     </section>
   );
 }
@@ -42,7 +43,9 @@ export function App() {
     <main className="desktop-shell">
       {snapshot.surface === 'running' ? <DesktopStatusBar snapshot={snapshot} /> : null}
       {showWizard ? <DependencyWizard snapshot={snapshot} /> : null}
-      {showStarting ? <StartingView /> : null}
+      {showStarting ? (
+        <StartingView stopping={snapshot.runtime.status === 'stopping'} />
+      ) : null}
       {showLogs ? <DiagnosticsView snapshot={snapshot} /> : null}
       {showSettings ? <DesktopSettings snapshot={snapshot} /> : null}
     </main>

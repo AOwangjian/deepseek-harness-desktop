@@ -16,12 +16,28 @@ export interface LoginItemApp {
   getLoginItemSettings(): { openAtLogin: boolean };
 }
 
+export function processExists(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'EPERM'
+    );
+  }
+}
+
 export interface WindowsAdapterOptions {
   readonly app: LoginItemApp;
   readonly inspectProcess: ProcessInspector;
   readonly terminateTree: ProcessTreeTerminator;
   readonly notify: (title: string, body: string) => void;
   readonly openPath: (target: string) => Promise<void>;
+  readonly processExists?: (pid: number) => boolean;
 }
 
 export async function defaultWindowsTerminateTree(pid: number): Promise<void> {
@@ -50,6 +66,7 @@ export class WindowsAdapter implements PlatformAdapter {
   private readonly terminateTree: ProcessTreeTerminator;
   private readonly notify: (title: string, body: string) => void;
   private readonly open: (target: string) => Promise<void>;
+  private readonly pidExists: (pid: number) => boolean;
 
   constructor(options: WindowsAdapterOptions) {
     this.app = options.app;
@@ -57,6 +74,7 @@ export class WindowsAdapter implements PlatformAdapter {
     this.terminateTree = options.terminateTree;
     this.notify = options.notify;
     this.open = options.openPath;
+    this.pidExists = options.processExists ?? processExists;
   }
 
   setAutoStart(enabled: boolean): void {
@@ -69,7 +87,11 @@ export class WindowsAdapter implements PlatformAdapter {
 
   async terminateOwnedProcessTree(record: ProcessRecord): Promise<void> {
     const live = await this.inspectProcess(record.pid);
-    if (live === null) return;
+    if (live === null) {
+      if (!this.pidExists(record.pid)) return;
+      await this.terminateTree(record.pid);
+      return;
+    }
     if (!sameExecutable(record.executable, live.executable) || !sameStartTime(record.startedAt, live.startedAt)) {
       throw new UnownedProcessError();
     }
