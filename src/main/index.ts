@@ -1,24 +1,24 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 
+import {
+  createWindowOptions,
+  loadRenderer,
+  resolveRendererTarget,
+} from './window';
+
 const createWindow = (): BrowserWindow => {
-  const window = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: path.join(__dirname, '../preload/index.js'),
-      sandbox: true,
-    },
+  const rendererPath = path.join(__dirname, '../renderer/index.html');
+  const window = new BrowserWindow(
+    createWindowOptions(path.join(__dirname, '../preload/index.js')),
+  );
+  const rendererTarget = resolveRendererTarget({
+    isPackaged: app.isPackaged,
+    rendererPath,
+    rendererUrl: process.env.ELECTRON_RENDERER_URL,
   });
 
-  const rendererUrl = process.env.ELECTRON_RENDERER_URL;
-  if (rendererUrl) {
-    void window.loadURL(rendererUrl);
-  } else {
-    void window.loadFile(path.join(__dirname, '../renderer/index.html'));
-  }
+  void loadRenderer(rendererTarget, window);
 
   return window;
 };
