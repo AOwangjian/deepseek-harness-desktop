@@ -23,6 +23,7 @@ import { WindowsAdapter, defaultWindowsTerminateTree } from './platform/windows-
 import { applyHarnessNavigationPolicy } from './security/navigation-policy';
 import { handleWindowClose, TrayController } from './tray-controller';
 import { desktopIpcChannels, APP_NAME } from '../shared/contracts';
+import { resolveDesktopUserDataPath } from './single-instance';
 import {
   createHarnessViewOptions,
   createWindowOptions,
@@ -31,15 +32,19 @@ import {
   resolveRendererTarget,
 } from './window';
 
-if (process.env.DSH_DESKTOP_USER_DATA) {
-  app.setPath('userData', process.env.DSH_DESKTOP_USER_DATA);
-}
+app.setPath(
+  'userData',
+  resolveDesktopUserDataPath({
+    override: process.env.DSH_DESKTOP_USER_DATA,
+    appData: app.getPath('appData'),
+  }),
+);
 
 const fakeHarnessPath = process.env.DSH_DESKTOP_FAKE_HARNESS;
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
-  app.quit();
+  app.exit(0);
 } else {
   let mainWindow: BrowserWindow | undefined;
   let harnessView: WebContentsView | undefined;
