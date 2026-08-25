@@ -49,6 +49,7 @@ export interface InstallExecutorOptions {
 export interface InstallExecutionResult {
   readonly exitCode: number;
   readonly progressEvents: readonly InstallProgressEvent[];
+  readonly progressTruncated: boolean;
 }
 
 export interface InstallExecutorResult {
@@ -155,17 +156,17 @@ function classifyInstallFailure(error: unknown): InstallSafetyError | undefined 
   if (nestedFailure(error, (candidate) =>
     typeof candidate === 'object' &&
     candidate !== null &&
-    ((candidate as { timedOut?: unknown }).timedOut === true ||
-      hasErrorCode(candidate, 'ETIMEDOUT')),
+    (candidate as { isCanceled?: unknown }).isCanceled === true,
   )) {
-    return installOperationalError('INSTALL_TIMED_OUT');
+    return installOperationalError('INSTALL_CANCELLED');
   }
   if (nestedFailure(error, (candidate) =>
     typeof candidate === 'object' &&
     candidate !== null &&
-    (candidate as { isCanceled?: unknown }).isCanceled === true,
+    ((candidate as { timedOut?: unknown }).timedOut === true ||
+      hasErrorCode(candidate, 'ETIMEDOUT')),
   )) {
-    return installOperationalError('INSTALL_CANCELLED');
+    return installOperationalError('INSTALL_TIMED_OUT');
   }
   if (nestedFailure(error, (candidate) => hasErrorCode(candidate, 'ENOENT'))) {
     return installOperationalError('INSTALL_NOT_FOUND');
@@ -403,6 +404,7 @@ export const defaultInstallExecutor: InstallExecutor = async (
     windowsHide: true,
     reject: false,
     buffer: false,
+    killDescendants: true,
     timeout: timeoutMs,
     ...(options.signal === undefined ? {} : { cancelSignal: options.signal }),
   });
@@ -439,7 +441,8 @@ export async function executeInstallPlan(
 ): Promise<InstallExecutionResult> {
   assertValidPlan(plan);
   tokenIssuer.consume(confirmationToken, plan);
-  if (options.signal?.aborted === true) {
+  const signalIsAborted = (): boolean => options.signal?.aborted === true;
+  if (signalIsAborted()) {
     throw installOperationalError('INSTALL_CANCELLED');
   }
   const timeoutMs = resolveTimeout(options.timeoutMs);
@@ -496,9 +499,12 @@ export async function executeInstallPlan(
       onProgress,
     });
   } catch (error: unknown) {
+    if (signalIsAborted()) {
+      throw installOperationalError('INSTALL_CANCELLED');
+    }
     throw classifyInstallFailure(error) ?? new InstallExecutionError();
   }
-  if (result.cancelled === true) {
+  if (result.cancelled === true || signalIsAborted()) {
     throw installOperationalError('INSTALL_CANCELLED');
   }
   if (result.timedOut === true) {
@@ -512,5 +518,9 @@ export async function executeInstallPlan(
       typeof result.exitCode === 'number' ? result.exitCode : undefined,
     );
   }
-  return { exitCode: 0, progressEvents: Object.freeze([...progressEvents]) };
+  return {
+    exitCode: 0,
+    progressEvents: Object.freeze([...progressEvents]),
+    progressTruncated,
+  };
 }

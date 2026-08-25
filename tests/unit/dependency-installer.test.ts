@@ -223,10 +223,105 @@ describe('dependency installer', () => {
         windowsHide: true,
         reject: false,
         buffer: false,
+        killDescendants: true,
         timeout: 500,
         cancelSignal: controller.signal,
       },
     );
+  });
+
+  it.each([
+    [{ exitCode: undefined, timedOut: true }, 'INSTALL_TIMED_OUT'],
+    [{ exitCode: undefined, isCanceled: true }, 'INSTALL_CANCELLED'],
+    [{ exitCode: undefined, timedOut: true, isCanceled: true }, 'INSTALL_CANCELLED'],
+    [{ exitCode: undefined, code: 'ENOENT' }, 'INSTALL_NOT_FOUND'],
+    [{ exitCode: undefined, code: 'EPERM' }, 'INSTALL_PERMISSION_DENIED'],
+  ] as const)(
+    'maps production execa result safely to %s',
+    async (execaResult, code) => {
+      const issuer = new ConfirmationTokenIssuer();
+      const plan = createInstallPlan({ dependency: 'node', mode: 'automatic' }, '22.12.0');
+      if (plan === null) throw new Error('expected an install plan');
+      const secret = 'TOP_SECRET_OUTPUT=do-not-leak';
+      vi.mocked(execa).mockReturnValue(
+        Promise.resolve({ ...execaResult, stdout: secret, stderr: secret, env: { SECRET: secret } }) as never,
+      );
+
+      const error = await executeInstallPlan(plan, issuer.issue(plan), issuer)
+        .then(() => undefined)
+        .catch((reason: unknown) => reason);
+
+      expect(execa).toHaveBeenCalledWith('winget', plan.args, expect.objectContaining({
+        shell: false,
+        killDescendants: true,
+      }));
+      expect(error).toMatchObject({ code });
+      expect(JSON.stringify(error)).not.toContain(secret);
+      expect(error).not.toHaveProperty('stdout');
+      expect(error).not.toHaveProperty('stderr');
+      expect(error).not.toHaveProperty('env');
+    },
+  );
+
+  it('maps nested production execa causes safely', async () => {
+    const issuer = new ConfirmationTokenIssuer();
+    const plan = createInstallPlan({ dependency: 'node', mode: 'automatic' }, '22.12.0');
+    if (plan === null) throw new Error('expected an install plan');
+    const secret = 'TOP_SECRET_OUTPUT=do-not-leak';
+    vi.mocked(execa).mockReturnValue(
+      Promise.reject({ cause: { code: 'EPERM', stdout: secret, stderr: secret, env: { SECRET: secret } } }) as never,
+    );
+
+    const error = await executeInstallPlan(plan, issuer.issue(plan), issuer)
+      .then(() => undefined)
+      .catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({ code: 'INSTALL_PERMISSION_DENIED' });
+    expect(JSON.stringify(error)).not.toContain(secret);
+    expect(error).not.toHaveProperty('stdout');
+    expect(error).not.toHaveProperty('stderr');
+    expect(error).not.toHaveProperty('env');
+  });
+
+  it('prefers cancellation over timeout for a rejected production execa execution', async () => {
+    const issuer = new ConfirmationTokenIssuer();
+    const plan = createInstallPlan({ dependency: 'node', mode: 'automatic' }, '22.12.0');
+    if (plan === null) throw new Error('expected an install plan');
+    vi.mocked(execa).mockReturnValue(
+      Promise.reject({ timedOut: true, isCanceled: true }) as never,
+    );
+
+    await expect(executeInstallPlan(plan, issuer.issue(plan), issuer)).rejects.toMatchObject({
+      code: 'INSTALL_CANCELLED',
+    });
+  });
+
+  it('prefers cancellation when the signal aborts during a timed-out production execution', async () => {
+    const issuer = new ConfirmationTokenIssuer();
+    const plan = createInstallPlan({ dependency: 'node', mode: 'automatic' }, '22.12.0');
+    if (plan === null) throw new Error('expected an install plan');
+    const controller = new AbortController();
+    vi.mocked(execa).mockImplementation(() => {
+      controller.abort();
+      return Promise.resolve({ exitCode: undefined, timedOut: true }) as never;
+    });
+
+    await expect(
+      executeInstallPlan(plan, issuer.issue(plan), issuer, undefined, { signal: controller.signal }),
+    ).rejects.toMatchObject({ code: 'INSTALL_CANCELLED' });
+  });
+
+  it('does not start the production process when cancellation predates execution', async () => {
+    const issuer = new ConfirmationTokenIssuer();
+    const plan = createInstallPlan({ dependency: 'node', mode: 'automatic' }, '22.12.0');
+    if (plan === null) throw new Error('expected an install plan');
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      executeInstallPlan(plan, issuer.issue(plan), issuer, undefined, { signal: controller.signal }),
+    ).rejects.toMatchObject({ code: 'INSTALL_CANCELLED' });
+    expect(execa).not.toHaveBeenCalled();
   });
 
   it('decodes UTF-8 progress split across stream chunks without garbling Chinese text', async () => {
@@ -281,23 +376,33 @@ describe('dependency installer', () => {
       stream: 'stdout',
       text: 'Installation output truncated.',
     };
+    expect(result.progressTruncated).toBe(true);
     expect(result.progressEvents).toEqual([truncationEvent]);
     expect(progress).toHaveBeenCalledExactlyOnceWith(truncationEvent);
   });
 
-  it('bounds cumulative UTF-8 progress bytes and emits one truncation event', async () => {
+  it('marks cumulative UTF-8 progress truncation before the event limit', async () => {
     const issuer = new ConfirmationTokenIssuer();
     const plan = createInstallPlan({ dependency: 'node', mode: 'automatic' }, '22.12.0');
     if (plan === null) throw new Error('expected an install plan');
+    const chunk = '安装'.repeat(600);
+    expect(Buffer.byteLength(chunk, 'utf8')).toBeLessThan(4 * 1_024);
     const executor: InstallExecutor = vi.fn(async (_executable, _args, options) => {
-      for (let index = 0; index < 100; index += 1) {
-        options.onProgress?.({ stream: 'stderr', text: '安装'.repeat(1_000) });
+      for (let index = 0; index < 19; index += 1) {
+        options.onProgress?.({ stream: 'stderr', text: chunk });
       }
       return { exitCode: 0 };
     });
 
     const result = await executeInstallPlan(plan, issuer.issue(plan), issuer, executor);
 
+    expect(result.progressTruncated).toBe(true);
+    expect(result.progressEvents).toHaveLength(19);
+    expect(result.progressEvents.slice(0, -1)).toEqual(
+      Array.from({ length: 18 }, () => ({ stream: 'stderr', text: chunk })),
+    );
+    expect(19).toBeLessThan(99);
+    expect(19 * Buffer.byteLength(chunk, 'utf8')).toBeGreaterThan(64 * 1_024);
     expect(
       result.progressEvents.reduce(
         (total, event) => total + Buffer.byteLength(event.text, 'utf8'),
@@ -313,6 +418,46 @@ describe('dependency installer', () => {
         (event) => event.text === 'Installation output truncated.',
       ),
     ).toHaveLength(1);
+  });
+
+  it('marks event-count progress truncation and retains one bounded marker', async () => {
+    const issuer = new ConfirmationTokenIssuer();
+    const plan = createInstallPlan({ dependency: 'node', mode: 'automatic' }, '22.12.0');
+    if (plan === null) throw new Error('expected an install plan');
+    const executor: InstallExecutor = vi.fn(async (_executable, _args, options) => {
+      for (let index = 0; index < 100; index += 1) {
+        options.onProgress?.({ stream: 'stdout', text: `chunk-${index}` });
+      }
+      return { exitCode: 0 };
+    });
+
+    const result = await executeInstallPlan(plan, issuer.issue(plan), issuer, executor);
+
+    expect(result.progressTruncated).toBe(true);
+    expect(result.progressEvents).toHaveLength(100);
+    expect(result.progressEvents.at(-1)).toEqual({
+      stream: 'stdout',
+      text: 'Installation output truncated.',
+    });
+    expect(result.progressEvents.filter((event) => event.text === 'Installation output truncated.')).toHaveLength(1);
+  });
+
+  it('does not infer progress truncation from ordinary output with the marker text', async () => {
+    const issuer = new ConfirmationTokenIssuer();
+    const plan = createInstallPlan({ dependency: 'node', mode: 'automatic' }, '22.12.0');
+    if (plan === null) throw new Error('expected an install plan');
+    const executor: InstallExecutor = vi.fn(async (_executable, _args, options) => {
+      options.onProgress?.({ stream: 'stdout', text: 'Installation output truncated.' });
+      return { exitCode: 0 };
+    });
+
+    await expect(
+      executeInstallPlan(plan, issuer.issue(plan), issuer, executor),
+    ).resolves.toEqual({
+      exitCode: 0,
+      progressEvents: [{ stream: 'stdout', text: 'Installation output truncated.' }],
+      progressTruncated: false,
+    });
   });
 
   it('isolates progress observer failures from successful installation', async () => {
