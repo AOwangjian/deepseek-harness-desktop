@@ -6,9 +6,12 @@ import {
   settingsSchema,
 } from '../../src/shared/contracts';
 import type {
+  DependencyName,
   DependencySnapshot,
+  DiagnosticSummary,
   HarnessRuntime,
   RuntimeDependencyName,
+  ServiceStatus,
 } from '../../src/shared/contracts';
 
 describe('IPC contracts', () => {
@@ -39,6 +42,10 @@ describe('IPC contracts', () => {
     expect(
       installRequestSchema.parse({ dependency: 'node', mode: 'manual' }),
     ).toEqual({ dependency: 'node', mode: 'manual' });
+    expect(
+      installRequestSchema.safeParse({ dependency: 'npm', mode: 'automatic' })
+        .success,
+    ).toBe(false);
   });
 
   it('rejects unknown install request fields', () => {
@@ -71,6 +78,11 @@ describe('IPC contracts', () => {
 
   it('preserves the application name contract', () => {
     expect(APP_NAME).toBe('DeepSeek Harness Desktop');
+  });
+
+  it('keeps install and runtime status names exact', () => {
+    expectTypeOf<DependencyName>().toEqualTypeOf<'node' | 'dsh'>();
+    expectTypeOf<ServiceStatus>().toEqualTypeOf<HarnessRuntime['status']>();
   });
 
   it('models an aggregate dependency snapshot with typed runtime dependencies', () => {
@@ -119,15 +131,22 @@ describe('IPC contracts', () => {
       dsh: { name: 'dsh', present: true, version: '1.0.0' },
       ready: true,
     };
+    const summary = {
+      generatedAt: '2026-08-25T00:00:00.000Z',
+      dependencies: snapshot,
+      runtime: running,
+      recentLogs: [],
+    } satisfies DiagnosticSummary;
 
     if (false) {
-      // @ts-expect-error Runtime status is readonly.
-      running.status = 'stopping';
+      // @ts-expect-error Runtime process identity is readonly.
+      running.pid = 99;
       // @ts-expect-error Snapshot readiness is readonly.
       snapshot.ready = false;
     }
     expect(running.status).toBe('running');
     expect(snapshot.ready).toBe(true);
+    expectTypeOf(summary.dependencies).toEqualTypeOf<DependencySnapshot>();
   });
 
   it('rejects non-loopback running URLs at compile time', () => {

@@ -6,20 +6,11 @@ const dependencyNameSchema = z.enum(['node', 'dsh']);
 const runtimeDependencyNameSchema = z.enum(['node', 'npm', 'dsh']);
 const installModeSchema = z.enum(['automatic', 'manual', 'later']);
 const updatePolicySchema = z.enum(['notify', 'manual']);
-const serviceStatusSchema = z.enum([
-  'checking',
-  'needs-setup',
-  'starting',
-  'running',
-  'stopping',
-  'failed',
-]);
 
 export type DependencyName = z.infer<typeof dependencyNameSchema>;
 export type RuntimeDependencyName = z.infer<typeof runtimeDependencyNameSchema>;
 export type InstallMode = z.infer<typeof installModeSchema>;
 export type UpdatePolicy = z.infer<typeof updatePolicySchema>;
-export type ServiceStatus = z.infer<typeof serviceStatusSchema>;
 
 export const installRequestSchema = z
   .object({
@@ -85,9 +76,11 @@ export type HarnessRuntime =
       readonly error: string;
     };
 
+export type ServiceStatus = HarnessRuntime['status'];
+
 export interface DiagnosticSummary {
   readonly generatedAt: string;
-  readonly dependencies: readonly DependencySnapshot[];
+  readonly dependencies: DependencySnapshot;
   readonly runtime: HarnessRuntime;
   readonly recentLogs: readonly string[];
 }
