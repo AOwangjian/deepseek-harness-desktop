@@ -84,3 +84,49 @@ export interface DiagnosticSummary {
   readonly runtime: HarnessRuntime;
   readonly recentLogs: readonly string[];
 }
+
+export const DESKTOP_STATUS_BAR_HEIGHT = 36 as const;
+
+export type DesktopSurface = 'setup' | 'starting' | 'diagnostics' | 'running';
+
+export const confirmInstallRequestSchema = z
+  .object({
+    token: z.string().min(1),
+  })
+  .strict();
+
+export type ConfirmInstallRequest = Readonly<z.infer<typeof confirmInstallRequestSchema>>;
+
+export const installPlanViewSchema = z
+  .object({
+    executable: z.enum(['winget', 'npm']),
+    args: z.array(z.string()),
+    source: z.enum(['Windows Package Manager', 'npmjs.org']),
+    version: z.string().min(1),
+  })
+  .strict();
+
+export type InstallPlanView = Readonly<z.infer<typeof installPlanViewSchema>>;
+
+export interface DesktopSnapshot {
+  readonly surface: DesktopSurface;
+  readonly runtime: HarnessRuntime;
+  readonly dependencies: DependencySnapshot;
+  readonly settings: DesktopSettings;
+  readonly installPlan: InstallPlanView | null;
+  readonly confirmationToken: string | null;
+  readonly logs: readonly string[];
+  readonly error?: string;
+}
+
+export const desktopIpcChannels = {
+  getState: 'desktop:getState',
+  chooseInstallMode: 'desktop:chooseInstallMode',
+  confirmInstall: 'desktop:confirmInstall',
+  start: 'desktop:start',
+  stop: 'desktop:stop',
+  restart: 'desktop:restart',
+  getLogs: 'desktop:getLogs',
+  saveSettings: 'desktop:saveSettings',
+  stateEvent: 'desktop:state',
+} as const;

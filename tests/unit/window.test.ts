@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createHarnessViewOptions,
   createWindowOptions,
+  harnessViewBounds,
   loadRenderer,
   resolveRendererTarget,
 } from '../../src/main/window';
@@ -9,6 +11,20 @@ import {
 describe('window configuration', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('places the Harness view below the 36px desktop status bar', () => {
+    expect(harnessViewBounds({ width: 1280, height: 820 })).toEqual({
+      x: 0,
+      y: 36,
+      width: 1280,
+      height: 784,
+    });
+    expect(createHarnessViewOptions().webPreferences).toMatchObject({
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    });
   });
 
   it('uses the hardened BrowserWindow options and configured preload path', () => {

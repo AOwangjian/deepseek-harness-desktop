@@ -1,7 +1,10 @@
 import type {
   BrowserWindow,
   BrowserWindowConstructorOptions,
+  WebContentsViewConstructorOptions,
 } from 'electron';
+
+import { DESKTOP_STATUS_BAR_HEIGHT } from '../shared/contracts';
 
 export type RendererTarget =
   | { kind: 'url'; value: string }
@@ -27,6 +30,28 @@ export function createWindowOptions(
       preload: preloadPath,
       sandbox: true,
     },
+  };
+}
+
+export function createHarnessViewOptions(): WebContentsViewConstructorOptions {
+  return {
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  };
+}
+
+export function harnessViewBounds(contentBounds: {
+  width: number;
+  height: number;
+}): { x: number; y: number; width: number; height: number } {
+  return {
+    x: 0,
+    y: DESKTOP_STATUS_BAR_HEIGHT,
+    width: Math.max(0, contentBounds.width),
+    height: Math.max(0, contentBounds.height - DESKTOP_STATUS_BAR_HEIGHT),
   };
 }
 
