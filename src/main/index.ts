@@ -63,6 +63,7 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(async () => {
+    Menu.setApplicationMenu(null);
     const recordStore = createAppProcessRecordStore(app);
     const diagnostics = new DiagnosticService();
     const platform = new WindowsAdapter({

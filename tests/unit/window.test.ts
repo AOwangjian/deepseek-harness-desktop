@@ -32,6 +32,7 @@ describe('window configuration', () => {
 
     expect(options.width).toBe(1280);
     expect(options.height).toBe(820);
+    expect(options.autoHideMenuBar).toBe(true);
     expect(options.webPreferences).toMatchObject({
       contextIsolation: true,
       nodeIntegration: false,

@@ -24,6 +24,7 @@ export function createWindowOptions(
   return {
     width: 1280,
     height: 820,
+    autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
