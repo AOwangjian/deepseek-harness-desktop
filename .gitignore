@@ -4,6 +4,7 @@ dist/
 out/
 coverage/
 playwright-report/
+test-results/
 .env*
 !.env.example
 *.log
