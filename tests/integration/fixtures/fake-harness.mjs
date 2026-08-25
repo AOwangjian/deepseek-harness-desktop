@@ -21,15 +21,16 @@ if (
   process.exitCode = 2;
 } else {
   const server = http.createServer((request, response) => {
-    if (request.url !== '/health') {
+    const url = request.url ?? '/';
+    if (url !== '/' && url !== '/health') {
       response.writeHead(404);
       response.end();
       return;
     }
 
-    const body = JSON.stringify({ status: 'ok' });
+    const body = url === '/health' ? JSON.stringify({ status: 'ok' }) : 'DeepSeek Harness';
     response.writeHead(200, {
-      'content-type': 'application/json; charset=utf-8',
+      'content-type': url === '/health' ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8',
       'content-length': Buffer.byteLength(body, 'utf8'),
     });
     response.end(body);

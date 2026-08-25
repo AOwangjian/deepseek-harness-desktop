@@ -18,6 +18,7 @@ export function App() {
 
   useEffect(() => {
     const api = window.desktop;
+    if (api === undefined) return undefined;
     void api.getState().then(setSnapshot);
     return api.subscribeState(setSnapshot);
   }, []);

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import net from 'node:net';
 
 import getPort from 'get-port';
 
@@ -31,10 +32,40 @@ const ALLOWED_TRANSITIONS: Readonly<Record<string, ReadonlySet<string>>> = {
   failed: new Set(['starting']),
 };
 
+function listenForFreePort(host: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, host, () => {
+      const address = server.address();
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (address === null || typeof address === 'string') {
+          reject(new Error('Failed to allocate a loopback port.'));
+          return;
+        }
+        resolve(address.port);
+      });
+    });
+  });
+}
+
 export async function defaultPortSelector(options: {
   host: string;
 }): Promise<number> {
-  return getPort({ host: options.host });
+  try {
+    return await Promise.race([
+      getPort({ host: options.host }),
+      new Promise<number>((_, reject) => {
+        setTimeout(() => reject(new Error('get-port timed out')), 1_500);
+      }),
+    ]);
+  } catch {
+    return listenForFreePort(options.host);
+  }
 }
 
 export async function defaultHealthProbe(url: string): Promise<boolean> {

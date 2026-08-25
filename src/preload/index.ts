@@ -1,11 +1,22 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import {
-  desktopIpcChannels,
-  type DesktopSettings,
-  type DesktopSnapshot,
-  type InstallRequest,
+import type {
+  DesktopSettings,
+  DesktopSnapshot,
+  InstallRequest,
 } from '../shared/contracts';
+
+const desktopIpcChannels = {
+  getState: 'desktop:getState',
+  chooseInstallMode: 'desktop:chooseInstallMode',
+  confirmInstall: 'desktop:confirmInstall',
+  start: 'desktop:start',
+  stop: 'desktop:stop',
+  restart: 'desktop:restart',
+  getLogs: 'desktop:getLogs',
+  saveSettings: 'desktop:saveSettings',
+  stateEvent: 'desktop:state',
+} as const;
 
 export interface DesktopPreloadApi {
   getState(): Promise<DesktopSnapshot>;

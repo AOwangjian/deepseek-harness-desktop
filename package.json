@@ -7,14 +7,18 @@
   "productName": "DeepSeek Harness Desktop",
   "main": "out/main/index.js",
   "author": "DeepSeek Harness",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/deepseek-harness-desktop/deepseek-harness-desktop.git"
+  },
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "dev": "electron-vite dev",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "playwright test",
     "build": "electron-vite build",
@@ -45,5 +49,38 @@
     "typescript": "^7.0.2",
     "vite": "^7.3.6",
     "vitest": "^4.1.11"
+  },
+  "build": {
+    "appId": "ai.deepseek.harness.desktop",
+    "productName": "DeepSeek Harness Desktop",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "repo": "deepseek-harness-desktop"
+    }
   }
 }

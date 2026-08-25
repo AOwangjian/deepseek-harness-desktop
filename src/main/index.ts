@@ -31,6 +31,12 @@ import {
   resolveRendererTarget,
 } from './window';
 
+if (process.env.DSH_DESKTOP_USER_DATA) {
+  app.setPath('userData', process.env.DSH_DESKTOP_USER_DATA);
+}
+
+const fakeHarnessPath = process.env.DSH_DESKTOP_FAKE_HARNESS;
+
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
@@ -68,13 +74,27 @@ if (!gotTheLock) {
     const harnessProcess = new HarnessProcess({
       recordStore,
       terminateTree: (record) => platform.terminateOwnedProcessTree(record),
+      ...(fakeHarnessPath === undefined
+        ? {}
+        : {
+            executable: 'node',
+            executableArgs: [fakeHarnessPath],
+          }),
     });
     harnessProcess.on('log', (event) => {
       diagnostics.append(event.line);
     });
     const supervisor = new HarnessSupervisor({ process: harnessProcess });
     controller = new AppController({
-      detect: detectDependencies,
+      detect:
+        fakeHarnessPath === undefined
+          ? detectDependencies
+          : async () => ({
+              node: { name: 'node', present: true, version: process.versions.node, executablePath: process.execPath },
+              npm: { name: 'npm', present: true, version: '11.0.0' },
+              dsh: { name: 'dsh', present: true, version: '0.0.0-e2e', executablePath: process.execPath },
+              ready: true,
+            }),
       supervisor,
       diagnostics,
       platform,
@@ -118,32 +138,36 @@ if (!gotTheLock) {
       }
     });
 
-    const tray = new Tray(nativeImage.createEmpty());
-    new TrayController(
-      tray,
-      { buildFromTemplate: (items) => Menu.buildFromTemplate([...items]) },
-      {
-        openWindow: restoreWindow,
-        start: () => {
-          void controller?.start();
+    try {
+      const tray = new Tray(nativeImage.createEmpty());
+      new TrayController(
+        tray,
+        { buildFromTemplate: (items) => Menu.buildFromTemplate([...items]) },
+        {
+          openWindow: restoreWindow,
+          start: () => {
+            void controller?.start();
+          },
+          stop: () => {
+            void controller?.stop();
+          },
+          restart: () => {
+            void controller?.restart();
+          },
+          showLogs: () => {
+            restoreWindow();
+          },
+          openSettings: restoreWindow,
+          quit: () => {
+            quitting = true;
+            app.quit();
+          },
         },
-        stop: () => {
-          void controller?.stop();
-        },
-        restart: () => {
-          void controller?.restart();
-        },
-        showLogs: () => {
-          restoreWindow();
-        },
-        openSettings: restoreWindow,
-        quit: () => {
-          quitting = true;
-          app.quit();
-        },
-      },
-      APP_NAME,
-    );
+        APP_NAME,
+      );
+    } catch {
+      // Empty tray images can fail on some Windows hosts; the window still works.
+    }
 
     mainWindow.on('close', (event) => {
       if (quitting) return;
