@@ -1,6 +1,6 @@
 {
   "name": "deepseek-harness-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "packageManager": "npm@11.6.2",
   "description": "A lightweight desktop shell for DeepSeek Harness.",
@@ -59,7 +59,8 @@
     },
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "build/icon.ico"
     ],
     "win": {
       "icon": "build/icon.ico",

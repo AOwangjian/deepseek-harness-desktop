@@ -9,6 +9,7 @@ import {
   Tray,
   WebContentsView,
 } from 'electron';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { AppController, createFileSettingsStore } from './app-controller';
@@ -39,17 +40,43 @@ app.setPath(
     appData: app.getPath('appData'),
   }),
 );
+app.disableHardwareAcceleration();
 
 const fakeHarnessPath = process.env.DSH_DESKTOP_FAKE_HARNESS;
+
+function logFatal(message: string, error?: unknown): void {
+  const details =
+    error instanceof Error
+      ? error.stack ?? error.message
+      : error === undefined
+        ? ''
+        : String(error);
+  const line = `${new Date().toISOString()} ${message} ${details}\n`;
+  try {
+    const directory = app.getPath('userData');
+    mkdirSync(directory, { recursive: true });
+    appendFileSync(path.join(directory, 'desktop-error.log'), line, 'utf8');
+  } catch {
+    // Best-effort crash breadcrumb.
+  }
+  console.error(message, error);
+}
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.exit(0);
 } else {
+  process.on('uncaughtException', (error) => {
+    logFatal('uncaughtException', error);
+  });
+  process.on('unhandledRejection', (error) => {
+    logFatal('unhandledRejection', error);
+  });
   let mainWindow: BrowserWindow | undefined;
   let harnessView: WebContentsView | undefined;
   let controller: AppController | undefined;
   let quitting = false;
+  let trayReady = false;
 
   const restoreWindow = (): void => {
     if (mainWindow === undefined) return;
@@ -150,43 +177,53 @@ if (!gotTheLock) {
     });
 
     try {
-      const tray = new Tray(nativeImage.createEmpty());
-      new TrayController(
-        tray,
-        { buildFromTemplate: (items) => Menu.buildFromTemplate([...items]) },
-        {
-          openWindow: restoreWindow,
-          start: () => {
-            void controller?.start();
-          },
-          stop: () => {
-            void controller?.stop();
-          },
-          restart: () => {
-            void controller?.restart();
-          },
-          showLogs: () => {
-            restoreWindow();
-            void controller?.setPanel('logs');
-          },
-          openSettings: () => {
-            restoreWindow();
-            void controller?.setPanel('settings');
-          },
-          quit: () => {
-            quitting = true;
-            app.quit();
-          },
-        },
-        APP_NAME,
+      let trayIcon = nativeImage.createFromPath(
+        path.join(__dirname, '../../build/icon.ico'),
       );
-    } catch {
-      // Empty tray images can fail on some Windows hosts; the window still works.
+      if (trayIcon.isEmpty()) {
+        trayIcon = await app.getFileIcon(process.execPath, { size: 'small' });
+      }
+      if (!trayIcon.isEmpty()) {
+        const tray = new Tray(trayIcon);
+        trayReady = true;
+        new TrayController(
+          tray,
+          { buildFromTemplate: (items) => Menu.buildFromTemplate([...items]) },
+          {
+            openWindow: restoreWindow,
+            start: () => {
+              void controller?.start();
+            },
+            stop: () => {
+              void controller?.stop();
+            },
+            restart: () => {
+              void controller?.restart();
+            },
+            showLogs: () => {
+              restoreWindow();
+              void controller?.setPanel('logs');
+            },
+            openSettings: () => {
+              restoreWindow();
+              void controller?.setPanel('settings');
+            },
+            quit: () => {
+              quitting = true;
+              app.quit();
+            },
+          },
+          APP_NAME,
+        );
+      }
+    } catch (error: unknown) {
+      logFatal('tray setup failed', error);
     }
 
     mainWindow.on('close', (event) => {
       if (quitting) return;
-      const closeToTray = controller?.getState().settings.closeToTray ?? true;
+      const closeToTray =
+        trayReady && (controller?.getState().settings.closeToTray ?? true);
       handleWindowClose(event, mainWindow!, closeToTray);
     });
 
@@ -196,7 +233,13 @@ if (!gotTheLock) {
       rendererUrl: process.env.ELECTRON_RENDERER_URL,
     });
     void loadRenderer(rendererTarget, mainWindow);
-    await controller.bootstrap();
+    mainWindow.show();
+    mainWindow.focus();
+    try {
+      await controller.bootstrap();
+    } catch (error: unknown) {
+      logFatal('bootstrap failed', error);
+    }
   });
 
   app.on('before-quit', (event) => {
