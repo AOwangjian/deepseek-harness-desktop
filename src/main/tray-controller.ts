@@ -8,13 +8,13 @@ export interface TrayMenu {
   readonly items: readonly TrayMenuItem[];
 }
 
-export interface TrayLike {
+export interface TrayLike<TMenu = TrayMenu> {
   setToolTip(value: string): void;
-  setContextMenu(menu: TrayMenu): void;
+  setContextMenu(menu: TMenu): void;
 }
 
-export interface TrayMenuBuilder {
-  buildFromTemplate(items: readonly TrayMenuItem[]): TrayMenu;
+export interface TrayMenuBuilder<TMenu = TrayMenu> {
+  buildFromTemplate(items: readonly TrayMenuItem[]): TMenu;
 }
 
 export interface TrayCallbacks {
@@ -43,14 +43,14 @@ export function handleWindowClose(
 }
 
 /** Tray wiring only. Harness policy lives in the application controller. */
-export class TrayController {
-  private readonly tray: TrayLike;
-  private readonly menuBuilder: TrayMenuBuilder;
+export class TrayController<TMenu = TrayMenu> {
+  private readonly tray: TrayLike<TMenu>;
+  private readonly menuBuilder: TrayMenuBuilder<TMenu>;
   private readonly callbacks: TrayCallbacks;
 
   constructor(
-    tray: TrayLike,
-    menuBuilder: TrayMenuBuilder,
+    tray: TrayLike<TMenu>,
+    menuBuilder: TrayMenuBuilder<TMenu>,
     callbacks: TrayCallbacks,
     appName: string,
   ) {
