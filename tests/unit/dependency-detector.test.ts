@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { execa } from 'execa';
 
 import {
-  defaultCommandProbe,
+  createCommandProbe,
   detectDependencies,
   type CommandProbe,
 } from '../../src/main/harness/dependency-detector';
@@ -10,13 +10,18 @@ import {
 vi.mock('execa', () => ({ execa: vi.fn() }));
 
 describe('dependency detector', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('uses a non-shell version probe with the required execa options', async () => {
+    const probe = createCommandProbe(async () => true);
     vi.mocked(execa).mockResolvedValue({
       stdout: '1.2.3',
       exitCode: 0,
     } as never);
 
-    await expect(defaultCommandProbe('node')).resolves.toEqual({
+    await expect(probe('node')).resolves.toEqual({
       stdout: '1.2.3',
       exitCode: 0,
     });
@@ -24,6 +29,84 @@ describe('dependency detector', () => {
       shell: false,
       reject: false,
       windowsHide: true,
+      timeout: 5_000,
+    });
+  });
+
+  it('uses the injected resolver for Windows missing-command shapes without reading localized text', async () => {
+    const probe = createCommandProbe(async () => false);
+    vi.mocked(execa).mockResolvedValue({
+      stdout: '',
+      stderr: "'missing' 不是内部或外部命令",
+      shortMessage: '乱码',
+      exitCode: 1,
+    } as never);
+
+    await expect(probe('missing')).resolves.toEqual({
+      notFound: true,
+      error: 'command not found',
+    });
+    expect(execa).not.toHaveBeenCalled();
+  });
+
+  it('keeps a normal non-zero command exit as present', async () => {
+    const probe = createCommandProbe(async () => true);
+    vi.mocked(execa).mockResolvedValue({
+      stdout: '',
+      stderr: '乱码',
+      shortMessage: '乱码',
+      exitCode: 1,
+    } as never);
+
+    await expect(probe('dsh')).resolves.toMatchObject({
+      exitCode: 1,
+      error: 'command exited with code 1',
+    });
+  });
+
+  it('classifies a failed command with no exit code as an execution error', async () => {
+    const probe = createCommandProbe(async () => true);
+    vi.mocked(execa).mockResolvedValue({
+      failed: true,
+      stdout: '',
+      shortMessage: 'spawn failure',
+      exitCode: null,
+    } as never);
+
+    await expect(probe('dsh')).resolves.toMatchObject({
+      error: 'command execution error',
+      shortMessage: 'spawn failure',
+    });
+  });
+
+  it('classifies a timed-out command without throwing or returning code null', async () => {
+    const probe = createCommandProbe(async () => true);
+    vi.mocked(execa).mockResolvedValue({
+      stdout: '',
+      shortMessage: 'timed out',
+      timedOut: true,
+      exitCode: null,
+    } as never);
+
+    await expect(probe('node')).resolves.toMatchObject({
+      timedOut: true,
+      error: 'command timed out',
+    });
+    const result = await probe('node');
+    expect(result).not.toHaveProperty('exitCode', null);
+  });
+
+  it('recognizes structured ENOENT even when the resolver says the command is available', async () => {
+    const probe = createCommandProbe(async () => true);
+    const enoent = Object.assign(new Error('spawn failed'), { code: 'ENOENT' });
+    vi.mocked(execa).mockRejectedValue({
+      cause: enoent,
+      originalError: enoent,
+    });
+
+    await expect(probe('node')).resolves.toEqual({
+      notFound: true,
+      error: 'command not found',
     });
   });
 

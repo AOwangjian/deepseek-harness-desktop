@@ -1,5 +1,9 @@
-import { execa } from 'execa';
+import { constants } from 'node:fs';
+import { access } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import path from 'node:path';
+
+import { execa } from 'execa';
 
 import type {
   DependencyCheckResult,
@@ -12,22 +16,40 @@ const semver = require('semver') as {
   valid(version: string): string | null;
 };
 
-/** The small result surface needed by the detector's command adapter. */
+const COMMAND_TIMEOUT_MS = 5_000;
+const DIAGNOSTIC_LIMIT = 2_048;
+
+/** A probe result keeps process failures distinct from invalid version output. */
 export interface CommandProbeResult {
   readonly stdout?: string | null;
   readonly exitCode?: number | null;
   readonly error?: string;
   readonly notFound?: boolean;
+  readonly timedOut?: boolean;
   readonly executablePath?: string;
+  readonly stderr?: string;
+  readonly shortMessage?: string;
 }
 
+/** Resolves a command through PATH/PATHEXT without starting a process. */
+export type CommandResolver = (command: string) => Promise<boolean>;
+
 /**
- * Runs one version command. Strings are accepted for simple injected probes;
- * the default probe returns a structured result so failures remain distinct.
+ * Runs one version command. The injected resolver makes command discovery
+ * deterministic in tests and avoids relying on localized command errors.
  */
 export type CommandProbe = (
   command: string,
 ) => Promise<string | null | CommandProbeResult>;
+
+function diagnostic(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0) {
+    return undefined;
+  }
+  return value.length <= DIAGNOSTIC_LIMIT
+    ? value
+    : `${value.slice(0, DIAGNOSTIC_LIMIT)}…`;
+}
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) {
@@ -39,63 +61,164 @@ function errorMessage(error: unknown): string {
   return 'command execution error';
 }
 
-function isNotFoundError(error: unknown): boolean {
+function hasCode(value: unknown, code: string): boolean {
   return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code?: unknown }).code === 'ENOENT'
+    typeof value === 'object' &&
+    value !== null &&
+    'code' in value &&
+    (value as { code?: unknown }).code === code
   );
 }
 
-function isNotFoundResult(result: {
-  readonly exitCode?: number | null;
-  readonly stderr?: string;
-  readonly shortMessage?: string;
-  readonly code?: string;
-}): boolean {
-  if (result.code === 'ENOENT') {
+function nestedFailure(
+  value: unknown,
+  predicate: (candidate: unknown) => boolean,
+  seen = new Set<object>(),
+): boolean {
+  if (predicate(value)) {
     return true;
   }
+  if (typeof value !== 'object' || value === null || seen.has(value)) {
+    return false;
+  }
+  seen.add(value);
+  for (const key of ['cause', 'originalError', 'error']) {
+    if (nestedFailure((value as Record<string, unknown>)[key], predicate, seen)) {
+      return true;
+    }
+  }
+  return false;
+}
 
-  const message = `${result.stderr ?? ''}\n${result.shortMessage ?? ''}`;
-  return (
-    result.exitCode === 1 &&
-    /(?:not recognized|not found|no such file or directory|不是内部或外部命令)/i.test(
-      message,
-    )
+function isEnoent(value: unknown): boolean {
+  return nestedFailure(value, (candidate) => hasCode(candidate, 'ENOENT'));
+}
+
+function isTimedOut(value: unknown): boolean {
+  return nestedFailure(
+    value,
+    (candidate) =>
+      (typeof candidate === 'object' &&
+        candidate !== null &&
+        'timedOut' in candidate &&
+        (candidate as { timedOut?: unknown }).timedOut === true) ||
+      hasCode(candidate, 'ETIMEDOUT'),
   );
 }
 
-/** The production command adapter. It never uses a shell and never throws. */
-export const defaultCommandProbe: CommandProbe = async (command) => {
-  try {
-    const result = await execa(command, ['--version'], {
-      shell: false,
-      reject: false,
-      windowsHide: true,
-    });
+function commandCandidates(command: string): string[] {
+  const isWindows = process.platform === 'win32';
+  const hasPath = /[\\/]/.test(command);
+  const directories = hasPath
+    ? ['']
+    : (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+  const hasExtension = path.extname(command) !== '';
+  const extensions =
+    isWindows && !hasExtension
+      ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
+          .split(';')
+          .filter(Boolean)
+      : [''];
 
-    if (isNotFoundResult(result)) {
+  return directories.flatMap((directory) =>
+    extensions.map((extension) =>
+      directory === ''
+        ? `${command}${extension}`
+        : path.join(directory, `${command}${extension}`),
+    ),
+  );
+}
+
+export const defaultCommandResolver: CommandResolver = async (command) => {
+  for (const candidate of commandCandidates(command)) {
+    try {
+      await access(candidate, constants.F_OK);
+      return true;
+    } catch {
+      // Try the next PATH/PATHEXT candidate.
+    }
+  }
+  return false;
+};
+
+function resultDiagnostics(result: {
+  readonly stderr?: unknown;
+  readonly shortMessage?: unknown;
+} | null | undefined): Pick<CommandProbeResult, 'stderr' | 'shortMessage'> {
+  const stderr = diagnostic(result?.stderr);
+  const shortMessage = diagnostic(result?.shortMessage);
+  return {
+    ...(stderr === undefined ? {} : { stderr }),
+    ...(shortMessage === undefined ? {} : { shortMessage }),
+  };
+}
+
+/** Creates a time-bounded adapter using shell:false and a separate argument array. */
+export function createCommandProbe(
+  resolver: CommandResolver = defaultCommandResolver,
+): CommandProbe {
+  return async (command) => {
+    let resolvable: boolean;
+    try {
+      resolvable = await resolver(command);
+    } catch (error: unknown) {
+      return { error: errorMessage(error) };
+    }
+    if (!resolvable) {
       return { notFound: true, error: 'command not found' };
     }
 
-    if (result.exitCode !== undefined && result.exitCode !== 0) {
+    try {
+      const result = await execa(command, ['--version'], {
+        shell: false,
+        reject: false,
+        windowsHide: true,
+        timeout: COMMAND_TIMEOUT_MS,
+      });
+      const diagnostics = resultDiagnostics(result);
+
+      if (isEnoent(result)) {
+        return { notFound: true, error: 'command not found', ...diagnostics };
+      }
+      if (isTimedOut(result)) {
+        return { timedOut: true, error: 'command timed out', ...diagnostics };
+      }
+
+      const exitCode =
+        typeof result.exitCode === 'number' ? result.exitCode : undefined;
+      if (result.failed === true && exitCode === undefined) {
+        return { error: 'command execution error', ...diagnostics };
+      }
+      if (exitCode !== undefined && exitCode !== 0) {
+        return {
+          stdout: result.stdout,
+          exitCode,
+          error: `command exited with code ${exitCode}`,
+          ...diagnostics,
+        };
+      }
+
       return {
         stdout: result.stdout,
-        exitCode: result.exitCode,
-        error: `command exited with code ${result.exitCode}`,
+        ...(exitCode === undefined ? {} : { exitCode }),
+        ...diagnostics,
       };
+    } catch (error: unknown) {
+      const diagnostics = resultDiagnostics(
+        error as { stderr?: unknown; shortMessage?: unknown },
+      );
+      if (isEnoent(error)) {
+        return { notFound: true, error: 'command not found', ...diagnostics };
+      }
+      if (isTimedOut(error)) {
+        return { timedOut: true, error: 'command timed out', ...diagnostics };
+      }
+      return { error: errorMessage(error), ...diagnostics };
     }
+  };
+}
 
-    return { stdout: result.stdout, exitCode: result.exitCode };
-  } catch (error: unknown) {
-    if (isNotFoundError(error)) {
-      return { notFound: true, error: 'command not found' };
-    }
-    return { error: errorMessage(error) };
-  }
-};
+export const defaultCommandProbe: CommandProbe = createCommandProbe();
 
 function invalidVersionResult<Name extends RuntimeDependencyName>(
   name: Name,
@@ -107,51 +230,6 @@ function invalidVersionResult<Name extends RuntimeDependencyName>(
     ...(executablePath === undefined ? {} : { executablePath }),
     error: 'invalid version output',
   };
-}
-
-function checkVersion<Name extends RuntimeDependencyName>(
-  name: Name,
-  probeResult: string | null | CommandProbeResult,
-): DependencyCheckResult<Name> {
-  if (probeResult === null) {
-    return { name, present: false, error: 'command not found' };
-  }
-
-  if (typeof probeResult === 'string') {
-    return parseVersion(name, probeResult);
-  }
-
-  const executablePath = probeResult.executablePath;
-  if (probeResult.notFound === true) {
-    return {
-      name,
-      present: false,
-      ...(executablePath === undefined ? {} : { executablePath }),
-      error: probeResult.error?.trim() || 'command not found',
-    };
-  }
-
-  if (probeResult.exitCode !== undefined && probeResult.exitCode !== 0) {
-    return {
-      name,
-      present: true,
-      ...(executablePath === undefined ? {} : { executablePath }),
-      error:
-        probeResult.error?.trim() ||
-        `command exited with code ${probeResult.exitCode}`,
-    };
-  }
-
-  if (probeResult.error !== undefined) {
-    return {
-      name,
-      present: false,
-      ...(executablePath === undefined ? {} : { executablePath }),
-      error: probeResult.error.trim() || 'command execution error',
-    };
-  }
-
-  return parseVersion(name, probeResult.stdout, executablePath);
 }
 
 function parseVersion<Name extends RuntimeDependencyName>(
@@ -181,6 +259,55 @@ function parseVersion<Name extends RuntimeDependencyName>(
   };
 }
 
+function checkVersion<Name extends RuntimeDependencyName>(
+  name: Name,
+  probeResult: string | null | CommandProbeResult,
+): DependencyCheckResult<Name> {
+  if (probeResult === null) {
+    return { name, present: false, error: 'command not found' };
+  }
+  if (typeof probeResult === 'string') {
+    return parseVersion(name, probeResult);
+  }
+
+  const executablePath = probeResult.executablePath;
+  if (probeResult.notFound === true) {
+    return {
+      name,
+      present: false,
+      ...(executablePath === undefined ? {} : { executablePath }),
+      error: probeResult.error?.trim() || 'command not found',
+    };
+  }
+  if (probeResult.timedOut === true) {
+    return {
+      name,
+      present: false,
+      ...(executablePath === undefined ? {} : { executablePath }),
+      error: probeResult.error?.trim() || 'command timed out',
+    };
+  }
+  if (typeof probeResult.exitCode === 'number' && probeResult.exitCode !== 0) {
+    return {
+      name,
+      present: true,
+      ...(executablePath === undefined ? {} : { executablePath }),
+      error:
+        probeResult.error?.trim() ||
+        `command exited with code ${probeResult.exitCode}`,
+    };
+  }
+  if (probeResult.error !== undefined) {
+    return {
+      name,
+      present: false,
+      ...(executablePath === undefined ? {} : { executablePath }),
+      error: probeResult.error.trim() || 'command execution error',
+    };
+  }
+  return parseVersion(name, probeResult.stdout, executablePath);
+}
+
 async function checkDependency<Name extends RuntimeDependencyName>(
   name: Name,
   probe: CommandProbe,
@@ -191,7 +318,7 @@ async function checkDependency<Name extends RuntimeDependencyName>(
     return {
       name,
       present: false,
-      error: isNotFoundError(error) ? 'command not found' : errorMessage(error),
+      error: isEnoent(error) ? 'command not found' : errorMessage(error),
     };
   }
 }
