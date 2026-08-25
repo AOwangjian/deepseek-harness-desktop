@@ -25,6 +25,7 @@ export function setupSnapshot(
     settings: { closeToTray: true, autoStart: false, updatePolicy: 'notify' },
     installPlan: null,
     confirmationToken: null,
+    panel: 'none',
     logs: [],
     ...overrides,
   };
@@ -39,6 +40,7 @@ export function mockDesktop(snapshot: DesktopSnapshot): DesktopPreloadApi {
     stop: vi.fn(async () => snapshot),
     restart: vi.fn(async () => snapshot),
     getLogs: vi.fn(async () => snapshot.logs),
+    setPanel: vi.fn(async () => snapshot),
     saveSettings: vi.fn(async () => snapshot),
     subscribeState: vi.fn(() => () => undefined),
   };

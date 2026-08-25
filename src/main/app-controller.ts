@@ -17,6 +17,7 @@ import {
   type DependencyName,
   type DependencySnapshot,
   type DesktopSettings,
+  type DesktopPanel,
   type DesktopSnapshot,
   type DesktopSurface,
   type HarnessRuntime,
@@ -74,6 +75,7 @@ export class AppController implements DesktopHost {
   private dependencies: DependencySnapshot;
   private settings: DesktopSettings = DEFAULT_DESKTOP_SETTINGS;
   private restricted = false;
+  private panel: DesktopPanel = 'none';
   private pendingPlan: InstallPlan | null = null;
   private readonly snapshotListeners = new Set<(snapshot: DesktopSnapshot) => void>();
 
@@ -95,7 +97,9 @@ export class AppController implements DesktopHost {
     };
     this.snapshot = this.buildSnapshot({ status: 'checking' });
     this.supervisor.on('snapshot', (runtime) => {
-      this.publish(this.buildSnapshot(this.decorateRuntime(runtime)));
+      const decorated = this.decorateRuntime(runtime);
+      if (decorated.status !== 'running') this.panel = 'none';
+      this.publish(this.buildSnapshot(decorated));
     });
   }
 
@@ -188,6 +192,11 @@ export class AppController implements DesktopHost {
     return this.diagnostics.recentLogs();
   }
 
+  setPanel(panel: DesktopPanel): DesktopSnapshot {
+    this.panel = panel;
+    return this.publish(this.buildSnapshot(this.snapshot.runtime));
+  }
+
   async saveSettings(settings: DesktopSettings): Promise<DesktopSnapshot> {
     this.settings = settings;
     await this.settingsStore.save(settings);
@@ -236,6 +245,7 @@ export class AppController implements DesktopHost {
     const error = runtime.status === 'failed' ? runtime.error : undefined;
     return Object.freeze({
       surface: surfaceFor(runtime, this.restricted),
+      panel: this.panel,
       runtime,
       dependencies: this.dependencies,
       settings: this.settings,

@@ -3,8 +3,10 @@ import type { IpcMain } from 'electron';
 import {
   confirmInstallRequestSchema,
   desktopIpcChannels,
+  desktopPanelSchema,
   installRequestSchema,
   settingsSchema,
+  type DesktopPanel,
   type DesktopSnapshot,
   type InstallRequest,
   type DesktopSettings,
@@ -18,6 +20,7 @@ export interface DesktopHost {
   stop(): Promise<DesktopSnapshot>;
   restart(): Promise<DesktopSnapshot>;
   getLogs(): readonly string[] | Promise<readonly string[]>;
+  setPanel(panel: DesktopPanel): DesktopSnapshot | Promise<DesktopSnapshot>;
   saveSettings(settings: DesktopSettings): Promise<DesktopSnapshot>;
   subscribe(listener: (snapshot: DesktopSnapshot) => void): () => void;
 }
@@ -30,6 +33,7 @@ export const DESKTOP_IPC_HANDLER_CHANNELS = [
   desktopIpcChannels.stop,
   desktopIpcChannels.restart,
   desktopIpcChannels.getLogs,
+  desktopIpcChannels.setPanel,
   desktopIpcChannels.saveSettings,
 ] as const;
 
@@ -54,6 +58,9 @@ export function registerIpc(
   ipcMain.handle(desktopIpcChannels.stop, async () => host.stop());
   ipcMain.handle(desktopIpcChannels.restart, async () => host.restart());
   ipcMain.handle(desktopIpcChannels.getLogs, async () => host.getLogs());
+  ipcMain.handle(desktopIpcChannels.setPanel, async (_event, payload: unknown) =>
+    host.setPanel(desktopPanelSchema.parse(payload)),
+  );
   ipcMain.handle(desktopIpcChannels.saveSettings, async (_event, payload: unknown) =>
     host.saveSettings(settingsSchema.parse(payload)),
   );

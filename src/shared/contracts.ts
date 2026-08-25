@@ -89,6 +89,10 @@ export const DESKTOP_STATUS_BAR_HEIGHT = 36 as const;
 
 export type DesktopSurface = 'setup' | 'starting' | 'diagnostics' | 'running';
 
+export const desktopPanelSchema = z.enum(['none', 'logs', 'settings']);
+
+export type DesktopPanel = z.infer<typeof desktopPanelSchema>;
+
 export const confirmInstallRequestSchema = z
   .object({
     token: z.string().min(1),
@@ -110,6 +114,7 @@ export type InstallPlanView = Readonly<z.infer<typeof installPlanViewSchema>>;
 
 export interface DesktopSnapshot {
   readonly surface: DesktopSurface;
+  readonly panel: DesktopPanel;
   readonly runtime: HarnessRuntime;
   readonly dependencies: DependencySnapshot;
   readonly settings: DesktopSettings;
@@ -127,6 +132,7 @@ export const desktopIpcChannels = {
   stop: 'desktop:stop',
   restart: 'desktop:restart',
   getLogs: 'desktop:getLogs',
+  setPanel: 'desktop:setPanel',
   saveSettings: 'desktop:saveSettings',
   stateEvent: 'desktop:state',
 } as const;

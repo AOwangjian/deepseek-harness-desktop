@@ -13,6 +13,18 @@ export function DesktopSettings(props: { snapshot: DesktopSnapshot }) {
   return (
     <section className="desktop-panel" aria-label="Desktop settings">
       <h1>Desktop settings</h1>
+      {snapshot.runtime.status === 'running' ? (
+        <div className="desktop-actions">
+          <button
+            type="button"
+            onClick={() => {
+              void window.desktop.setPanel('none');
+            }}
+          >
+            Back
+          </button>
+        </div>
+      ) : null}
       <label>
         <input
           type="checkbox"

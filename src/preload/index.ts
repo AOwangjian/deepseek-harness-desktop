@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import type {
+  DesktopPanel,
   DesktopSettings,
   DesktopSnapshot,
   InstallRequest,
@@ -14,6 +15,7 @@ const desktopIpcChannels = {
   stop: 'desktop:stop',
   restart: 'desktop:restart',
   getLogs: 'desktop:getLogs',
+  setPanel: 'desktop:setPanel',
   saveSettings: 'desktop:saveSettings',
   stateEvent: 'desktop:state',
 } as const;
@@ -26,6 +28,7 @@ export interface DesktopPreloadApi {
   stop(): Promise<DesktopSnapshot>;
   restart(): Promise<DesktopSnapshot>;
   getLogs(): Promise<readonly string[]>;
+  setPanel(panel: DesktopPanel): Promise<DesktopSnapshot>;
   saveSettings(settings: DesktopSettings): Promise<DesktopSnapshot>;
   subscribeState(listener: (snapshot: DesktopSnapshot) => void): () => void;
 }
@@ -40,6 +43,7 @@ const desktopApi: DesktopPreloadApi = {
   stop: () => ipcRenderer.invoke(desktopIpcChannels.stop),
   restart: () => ipcRenderer.invoke(desktopIpcChannels.restart),
   getLogs: () => ipcRenderer.invoke(desktopIpcChannels.getLogs),
+  setPanel: (panel) => ipcRenderer.invoke(desktopIpcChannels.setPanel, panel),
   saveSettings: (settings) =>
     ipcRenderer.invoke(desktopIpcChannels.saveSettings, settings),
   subscribeState: (listener) => {

@@ -136,8 +136,13 @@ if (!gotTheLock) {
         window.webContents.send(desktopIpcChannels.stateEvent, snapshot);
       }
       if (harnessView === undefined) return;
-      if (snapshot.runtime.status === 'running') {
-        void harnessView.webContents.loadURL(snapshot.runtime.url);
+      const showHarness =
+        snapshot.runtime.status === 'running' && snapshot.panel === 'none';
+      if (showHarness) {
+        const currentUrl = harnessView.webContents.getURL();
+        if (currentUrl !== snapshot.runtime.url) {
+          void harnessView.webContents.loadURL(snapshot.runtime.url);
+        }
         harnessView.setVisible(true);
       } else {
         harnessView.setVisible(false);
@@ -162,8 +167,12 @@ if (!gotTheLock) {
           },
           showLogs: () => {
             restoreWindow();
+            void controller?.setPanel('logs');
           },
-          openSettings: restoreWindow,
+          openSettings: () => {
+            restoreWindow();
+            void controller?.setPanel('settings');
+          },
           quit: () => {
             quitting = true;
             app.quit();

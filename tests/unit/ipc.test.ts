@@ -22,6 +22,7 @@ const snapshot: DesktopSnapshot = {
   settings: { closeToTray: true, autoStart: false, updatePolicy: 'notify' },
   installPlan: null,
   confirmationToken: null,
+  panel: 'none',
   logs: [],
 };
 
@@ -38,6 +39,7 @@ function createHost(overrides: Partial<DesktopHost> = {}) {
     stop: vi.fn(async () => snapshot),
     restart: vi.fn(async () => snapshot),
     getLogs: vi.fn(async () => ['READY']),
+    setPanel: vi.fn(async () => snapshot),
     saveSettings: vi.fn(async () => snapshot),
     subscribe,
     ...overrides,
@@ -75,6 +77,7 @@ describe('desktop IPC', () => {
       desktopIpcChannels.getState,
       desktopIpcChannels.restart,
       desktopIpcChannels.saveSettings,
+      desktopIpcChannels.setPanel,
       desktopIpcChannels.start,
       desktopIpcChannels.stop,
     ].sort());
@@ -123,6 +126,10 @@ describe('desktop IPC', () => {
         command: 'rm -rf /',
       }),
     ).rejects.toThrow();
+
+    await ipcMain.invoke(desktopIpcChannels.setPanel, 'logs');
+    expect(host.setPanel).toHaveBeenCalledExactlyOnceWith('logs');
+    await expect(ipcMain.invoke(desktopIpcChannels.setPanel, 'shell')).rejects.toThrow();
   });
 
   it('does not expose a generic command-execution method', () => {
@@ -134,6 +141,7 @@ describe('desktop IPC', () => {
       desktopIpcChannels.stop,
       desktopIpcChannels.restart,
       desktopIpcChannels.getLogs,
+      desktopIpcChannels.setPanel,
       desktopIpcChannels.saveSettings,
     ];
     expect(source.some((channel) => /exec|spawn|shell|command/i.test(channel))).toBe(

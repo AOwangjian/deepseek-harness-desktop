@@ -220,4 +220,29 @@ describe('AppController', () => {
     expect(platform.terminateOwnedProcessTree).toHaveBeenCalledExactlyOnceWith(record);
     expect(store.getRecord()).toBeNull();
   });
+
+  it('opens logs and settings without stopping the running service', async () => {
+    const supervisor = new FakeSupervisor();
+    const controller = new AppController({
+      detect: async () => readyDependencies,
+      supervisor: supervisor as never,
+      diagnostics: new DiagnosticService(),
+      platform: createPlatform(),
+      recordStore: memoryRecordStore() as never,
+      tokens: new ConfirmationTokenIssuer(),
+      settingsStore: createMemorySettingsStore(),
+    });
+    await controller.bootstrap();
+
+    expect(controller.setPanel('logs')).toMatchObject({
+      panel: 'logs',
+      surface: 'running',
+      runtime: { status: 'running' },
+    });
+    expect(controller.setPanel('settings')).toMatchObject({
+      panel: 'settings',
+      runtime: { status: 'running' },
+    });
+    expect(controller.setPanel('none').panel).toBe('none');
+  });
 });

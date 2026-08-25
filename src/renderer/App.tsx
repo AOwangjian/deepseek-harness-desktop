@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import type { DesktopSnapshot } from '../shared/contracts';
 import { DependencyWizard } from './components/DependencyWizard';
+import { DesktopSettings } from './components/DesktopSettings';
 import { DesktopStatusBar } from './components/DesktopStatusBar';
 import { DiagnosticsView } from './components/DiagnosticsView';
 
@@ -31,12 +32,19 @@ export function App() {
     );
   }
 
+  const showLogs =
+    snapshot.surface === 'diagnostics' || snapshot.panel === 'logs';
+  const showSettings = snapshot.panel === 'settings';
+  const showWizard = snapshot.surface === 'setup' && snapshot.panel === 'none';
+  const showStarting = snapshot.surface === 'starting' && snapshot.panel === 'none';
+
   return (
     <main className="desktop-shell">
-      {snapshot.surface === 'setup' ? <DependencyWizard snapshot={snapshot} /> : null}
-      {snapshot.surface === 'starting' ? <StartingView /> : null}
-      {snapshot.surface === 'diagnostics' ? <DiagnosticsView snapshot={snapshot} /> : null}
       {snapshot.surface === 'running' ? <DesktopStatusBar snapshot={snapshot} /> : null}
+      {showWizard ? <DependencyWizard snapshot={snapshot} /> : null}
+      {showStarting ? <StartingView /> : null}
+      {showLogs ? <DiagnosticsView snapshot={snapshot} /> : null}
+      {showSettings ? <DesktopSettings snapshot={snapshot} /> : null}
     </main>
   );
 }

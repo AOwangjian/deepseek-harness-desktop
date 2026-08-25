@@ -68,6 +68,45 @@ describe('App shell', () => {
     expect(writeText).toHaveBeenCalled();
   });
 
+  it('opens logs and settings from the running status bar', async () => {
+    const running = setupSnapshot({
+      surface: 'running',
+      runtime: {
+        status: 'running',
+        pid: 4321,
+        port: 18765,
+        url: 'http://127.0.0.1:18765',
+      },
+      dependencies: readyDependencies,
+    });
+    const api = mockDesktop(running);
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Logs' }));
+    expect(api.setPanel).toHaveBeenCalledWith('logs');
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(api.setPanel).toHaveBeenCalledWith('settings');
+  });
+
+  it('shows the logs panel over the running shell', async () => {
+    mockDesktop(
+      setupSnapshot({
+        surface: 'running',
+        panel: 'logs',
+        runtime: {
+          status: 'running',
+          pid: 4321,
+          port: 18765,
+          url: 'http://127.0.0.1:18765',
+        },
+        dependencies: readyDependencies,
+        logs: ['READY'],
+      }),
+    );
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: 'Logs' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
+  });
+
   it('announces status changes politely', async () => {
     mockDesktop(
       setupSnapshot({
