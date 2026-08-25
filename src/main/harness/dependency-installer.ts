@@ -14,7 +14,13 @@ const semver = require('semver') as {
 };
 
 const DEFAULT_CONFIRMATION_TTL_MS = 5 * 60 * 1_000;
+const DEFAULT_MAX_CONFIRMATION_TOKENS = 1_000;
+const DEFAULT_INSTALL_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_PROGRESS_EVENTS = 100;
+const MAX_PROGRESS_EVENT_BYTES = 4 * 1_024;
+const MAX_PROGRESS_TOTAL_BYTES = 64 * 1_024;
+const PROGRESS_TRUNCATED_TEXT = 'Installation output truncated.';
+const PROGRESS_TRUNCATED_BYTES = Buffer.byteLength(PROGRESS_TRUNCATED_TEXT, 'utf8');
 
 export type InstallExecutable = 'winget' | 'npm';
 export type InstallSource = 'Windows Package Manager' | 'npmjs.org';
@@ -35,6 +41,8 @@ export interface InstallExecutorOptions {
   readonly shell: false;
   readonly windowsHide: true;
   readonly reject: false;
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
   readonly onProgress?: (event: InstallProgressEvent) => void;
 }
 
@@ -43,11 +51,18 @@ export interface InstallExecutionResult {
   readonly progressEvents: readonly InstallProgressEvent[];
 }
 
+export interface InstallExecutorResult {
+  readonly exitCode: number | null | undefined;
+  readonly timedOut?: boolean;
+  readonly cancelled?: boolean;
+  readonly errorCode?: string;
+}
+
 export type InstallExecutor = (
   executable: InstallExecutable,
   args: readonly string[],
   options: InstallExecutorOptions,
-) => Promise<{ readonly exitCode: number | null | undefined }>;
+) => Promise<InstallExecutorResult>;
 
 export type InstallErrorCode =
   | 'REQUEST_INVALID'
@@ -55,7 +70,19 @@ export type InstallErrorCode =
   | 'PLAN_INVALID'
   | 'CONFIRMATION_INVALID'
   | 'CONFIRMATION_EXPIRED'
+  | 'INSTALL_NOT_FOUND'
+  | 'INSTALL_PERMISSION_DENIED'
+  | 'INSTALL_CANCELLED'
+  | 'INSTALL_TIMED_OUT'
   | 'INSTALL_FAILED';
+
+type InstallOperationalErrorCode = Extract<
+  InstallErrorCode,
+  | 'INSTALL_NOT_FOUND'
+  | 'INSTALL_PERMISSION_DENIED'
+  | 'INSTALL_CANCELLED'
+  | 'INSTALL_TIMED_OUT'
+>;
 
 /** Safe, structured errors intentionally omit command output and environment data. */
 export class InstallSafetyError extends Error {
@@ -83,6 +110,80 @@ export class InstallExecutionError extends InstallSafetyError {
     );
     this.name = 'InstallExecutionError';
   }
+}
+
+function installOperationalError(code: InstallOperationalErrorCode): InstallSafetyError {
+  const messages: Record<InstallOperationalErrorCode, string> = {
+    INSTALL_NOT_FOUND: 'Dependency installer was not found.',
+    INSTALL_PERMISSION_DENIED: 'Permission was denied while installing the dependency.',
+    INSTALL_CANCELLED: 'Dependency installation was cancelled.',
+    INSTALL_TIMED_OUT: 'Dependency installation timed out.',
+  };
+  return new InstallSafetyError(code, messages[code]);
+}
+
+function nestedFailure(
+  value: unknown,
+  predicate: (candidate: unknown) => boolean,
+  seen = new Set<object>(),
+): boolean {
+  if (predicate(value)) {
+    return true;
+  }
+  if (typeof value !== 'object' || value === null || seen.has(value)) {
+    return false;
+  }
+  seen.add(value);
+  for (const key of ['cause', 'originalError', 'error']) {
+    if (nestedFailure((value as Record<string, unknown>)[key], predicate, seen)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasErrorCode(value: unknown, code: string): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'code' in value &&
+    (value as { code?: unknown }).code === code
+  );
+}
+
+function classifyInstallFailure(error: unknown): InstallSafetyError | undefined {
+  if (nestedFailure(error, (candidate) =>
+    typeof candidate === 'object' &&
+    candidate !== null &&
+    ((candidate as { timedOut?: unknown }).timedOut === true ||
+      hasErrorCode(candidate, 'ETIMEDOUT')),
+  )) {
+    return installOperationalError('INSTALL_TIMED_OUT');
+  }
+  if (nestedFailure(error, (candidate) =>
+    typeof candidate === 'object' &&
+    candidate !== null &&
+    (candidate as { isCanceled?: unknown }).isCanceled === true,
+  )) {
+    return installOperationalError('INSTALL_CANCELLED');
+  }
+  if (nestedFailure(error, (candidate) => hasErrorCode(candidate, 'ENOENT'))) {
+    return installOperationalError('INSTALL_NOT_FOUND');
+  }
+  if (nestedFailure(error, (candidate) =>
+    hasErrorCode(candidate, 'EACCES') || hasErrorCode(candidate, 'EPERM'),
+  )) {
+    return installOperationalError('INSTALL_PERMISSION_DENIED');
+  }
+  return undefined;
+}
+
+function resolveTimeout(timeoutMs: number | undefined): number {
+  const resolvedTimeout = timeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
+  if (!Number.isFinite(resolvedTimeout) || resolvedTimeout <= 0) {
+    throw new InstallSafetyError('REQUEST_INVALID', 'Install timeout must be positive.');
+  }
+  return resolvedTimeout;
 }
 
 function validVersion(version: unknown): string {
@@ -206,6 +307,7 @@ function assertValidPlan(plan: unknown): asserts plan is InstallPlan {
 
 export interface ConfirmationTokenIssuerOptions {
   readonly ttlMs?: number;
+  readonly maxTokens?: number;
   readonly now?: () => number;
 }
 
@@ -218,22 +320,44 @@ interface TokenRecord {
 export class ConfirmationTokenIssuer {
   private readonly tokens = new Map<string, TokenRecord>();
   private readonly ttlMs: number;
+  private readonly maxTokens: number;
   private readonly now: () => number;
 
   constructor(options: ConfirmationTokenIssuerOptions = {}) {
     this.ttlMs = options.ttlMs ?? DEFAULT_CONFIRMATION_TTL_MS;
+    this.maxTokens = options.maxTokens ?? DEFAULT_MAX_CONFIRMATION_TOKENS;
     this.now = options.now ?? Date.now;
     if (!Number.isFinite(this.ttlMs) || this.ttlMs <= 0) {
       throw new RangeError('Confirmation token TTL must be positive.');
+    }
+    if (!Number.isSafeInteger(this.maxTokens) || this.maxTokens <= 0) {
+      throw new RangeError('Confirmation token capacity must be a positive integer.');
+    }
+  }
+
+  private cleanExpiredTokens(now: number): void {
+    for (const [token, record] of this.tokens) {
+      if (record.expiresAt <= now) {
+        this.tokens.delete(token);
+      }
     }
   }
 
   issue(plan: InstallPlan): string {
     assertValidPlan(plan);
+    const now = this.now();
+    this.cleanExpiredTokens(now);
+    while (this.tokens.size >= this.maxTokens) {
+      const oldestToken = this.tokens.keys().next().value;
+      if (oldestToken === undefined) {
+        break;
+      }
+      this.tokens.delete(oldestToken);
+    }
     const token = randomBytes(32).toString('base64url');
     this.tokens.set(token, {
       fingerprint: planFingerprint(plan),
-      expiresAt: this.now() + this.ttlMs,
+      expiresAt: now + this.ttlMs,
     });
     return token;
   }
@@ -262,6 +386,8 @@ export function createConfirmationTokenIssuer(
 }
 
 export interface ExecuteInstallPlanOptions {
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
   readonly onProgress?: (event: InstallProgressEvent) => void;
 }
 
@@ -271,20 +397,37 @@ export const defaultInstallExecutor: InstallExecutor = async (
   args,
   options,
 ) => {
+  const timeoutMs = resolveTimeout(options.timeoutMs);
   const child = execa(executable, [...args], {
     shell: false,
     windowsHide: true,
     reject: false,
     buffer: false,
+    timeout: timeoutMs,
+    ...(options.signal === undefined ? {} : { cancelSignal: options.signal }),
   });
-  child.stdout?.on('data', (chunk: Buffer | string) => {
-    options.onProgress?.({ stream: 'stdout', text: chunk.toString() });
+  child.stdout?.setEncoding('utf8');
+  child.stderr?.setEncoding('utf8');
+  const reportProgress = (stream: InstallProgressEvent['stream'], text: string): void => {
+    try {
+      options.onProgress?.({ stream, text });
+    } catch {
+      // Progress observers must not affect installation execution.
+    }
+  };
+  child.stdout?.on('data', (chunk: string) => {
+    reportProgress('stdout', chunk);
   });
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    options.onProgress?.({ stream: 'stderr', text: chunk.toString() });
+  child.stderr?.on('data', (chunk: string) => {
+    reportProgress('stderr', chunk);
   });
   const result = await child;
-  return { exitCode: result.exitCode };
+  return {
+    exitCode: result.exitCode,
+    ...(result.timedOut === true ? { timedOut: true } : {}),
+    ...(result.isCanceled === true ? { cancelled: true } : {}),
+    ...(typeof result.code === 'string' ? { errorCode: result.code } : {}),
+  };
 };
 
 export async function executeInstallPlan(
@@ -296,31 +439,73 @@ export async function executeInstallPlan(
 ): Promise<InstallExecutionResult> {
   assertValidPlan(plan);
   tokenIssuer.consume(confirmationToken, plan);
+  if (options.signal?.aborted === true) {
+    throw installOperationalError('INSTALL_CANCELLED');
+  }
+  const timeoutMs = resolveTimeout(options.timeoutMs);
 
   const progressEvents: InstallProgressEvent[] = [];
+  let progressBytes = 0;
+  let progressTruncated = false;
+  const publishProgress = (event: InstallProgressEvent): void => {
+    const safeEvent = Object.freeze({ stream: event.stream, text: event.text });
+    progressEvents.push(safeEvent);
+    try {
+      options.onProgress?.(safeEvent);
+    } catch {
+      // Progress observers must not affect installation execution.
+    }
+  };
+  const publishTruncation = (stream: InstallProgressEvent['stream']): void => {
+    if (progressTruncated || progressEvents.length >= MAX_PROGRESS_EVENTS) {
+      return;
+    }
+    progressTruncated = true;
+    progressBytes += PROGRESS_TRUNCATED_BYTES;
+    publishProgress({ stream, text: PROGRESS_TRUNCATED_TEXT });
+  };
   const onProgress = (event: InstallProgressEvent): void => {
     if (
-      progressEvents.length >= MAX_PROGRESS_EVENTS ||
       (event.stream !== 'stdout' && event.stream !== 'stderr') ||
       typeof event.text !== 'string'
     ) {
       return;
     }
-    const safeEvent = Object.freeze({ stream: event.stream, text: event.text });
-    progressEvents.push(safeEvent);
-    options.onProgress?.(safeEvent);
+    const eventBytes = Buffer.byteLength(event.text, 'utf8');
+    if (
+      progressTruncated ||
+      progressEvents.length >= MAX_PROGRESS_EVENTS - 1 ||
+      eventBytes > MAX_PROGRESS_EVENT_BYTES ||
+      progressBytes + eventBytes > MAX_PROGRESS_TOTAL_BYTES - PROGRESS_TRUNCATED_BYTES
+    ) {
+      publishTruncation(event.stream);
+      return;
+    }
+    progressBytes += eventBytes;
+    publishProgress(event);
   };
 
-  let result: { readonly exitCode: number | null | undefined };
+  let result: InstallExecutorResult;
   try {
     result = await executor(plan.executable, plan.args, {
       shell: false,
       windowsHide: true,
       reject: false,
+      timeoutMs,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       onProgress,
     });
-  } catch {
-    throw new InstallExecutionError();
+  } catch (error: unknown) {
+    throw classifyInstallFailure(error) ?? new InstallExecutionError();
+  }
+  if (result.cancelled === true) {
+    throw installOperationalError('INSTALL_CANCELLED');
+  }
+  if (result.timedOut === true) {
+    throw installOperationalError('INSTALL_TIMED_OUT');
+  }
+  if (result.errorCode !== undefined) {
+    throw classifyInstallFailure({ code: result.errorCode }) ?? new InstallExecutionError();
   }
   if (result.exitCode !== 0) {
     throw new InstallExecutionError(
