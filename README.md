@@ -29,12 +29,12 @@ Harness 本身仍是 DeepSeek 的项目。本仓库只是桌面包装，不是 D
 
 ### 安装包
 
-当前版本 **0.1.0**。正式安装包由 GitHub Actions 在打 `v*` 标签时构建，并挂到 [GitHub Releases](https://github.com/AOwangjian/deepseek-harness-desktop/releases/latest)。
+当前版本 **0.1.1**。正式安装包由 GitHub Actions 在打 `v*` 标签时构建，并挂到 [GitHub Releases](https://github.com/AOwangjian/deepseek-harness-desktop/releases/latest)。
 
 | 产物 | 文件 | 说明 |
 | --- | --- | --- |
-| NSIS 安装包 | [DeepSeek-Harness-Desktop-Setup-0.1.0.exe](https://github.com/AOwangjian/deepseek-harness-desktop/releases/download/v0.1.0/DeepSeek-Harness-Desktop-Setup-0.1.0.exe) | 可安装、可卸载 |
-| 便携版 | [DeepSeek-Harness-Desktop-0.1.0.exe](https://github.com/AOwangjian/deepseek-harness-desktop/releases/download/v0.1.0/DeepSeek-Harness-Desktop-0.1.0.exe) | 免安装，双击即用 |
+| NSIS 安装包 | [DeepSeek-Harness-Desktop-Setup-0.1.1.exe](https://github.com/AOwangjian/deepseek-harness-desktop/releases/download/v0.1.1/DeepSeek-Harness-Desktop-Setup-0.1.1.exe) | 可安装、可卸载 |
+| 便携版 | [DeepSeek-Harness-Desktop-0.1.1.exe](https://github.com/AOwangjian/deepseek-harness-desktop/releases/download/v0.1.1/DeepSeek-Harness-Desktop-0.1.1.exe) | 免安装，双击即用 |
 | CI 未签名构建 | [Actions 产物 `windows-unsigned`](https://github.com/AOwangjian/deepseek-harness-desktop/actions) | 每次推送 `main` 都会打包，从对应 workflow 的 Artifacts 下载 |
 
 Windows 安装包由仓库工作流 [Release](https://github.com/AOwangjian/deepseek-harness-desktop/blob/main/.github/workflows/release.yml) 在 `windows-latest` 上构建。本地也可 `npm run dist` / `npm run dist:portable`。
@@ -97,12 +97,12 @@ Updates are also confirmation-gated. Nothing installs silently.
 
 ### Installers
 
-Current version **0.1.0**. Tagged `v*` builds are produced by GitHub Actions and attached to [GitHub Releases](https://github.com/AOwangjian/deepseek-harness-desktop/releases/latest).
+Current version **0.1.1**. Tagged `v*` builds are produced by GitHub Actions and attached to [GitHub Releases](https://github.com/AOwangjian/deepseek-harness-desktop/releases/latest).
 
 | Artifact | File | Notes |
 | --- | --- | --- |
-| NSIS installer | [DeepSeek-Harness-Desktop-Setup-0.1.0.exe](https://github.com/AOwangjian/deepseek-harness-desktop/releases/download/v0.1.0/DeepSeek-Harness-Desktop-Setup-0.1.0.exe) | Installable / uninstallable |
-| Portable | [DeepSeek-Harness-Desktop-0.1.0.exe](https://github.com/AOwangjian/deepseek-harness-desktop/releases/download/v0.1.0/DeepSeek-Harness-Desktop-0.1.0.exe) | No installer, run directly |
+| NSIS installer | [DeepSeek-Harness-Desktop-Setup-0.1.1.exe](https://github.com/AOwangjian/deepseek-harness-desktop/releases/download/v0.1.1/DeepSeek-Harness-Desktop-Setup-0.1.1.exe) | Installable / uninstallable |
+| Portable | [DeepSeek-Harness-Desktop-0.1.1.exe](https://github.com/AOwangjian/deepseek-harness-desktop/releases/download/v0.1.1/DeepSeek-Harness-Desktop-0.1.1.exe) | No installer, run directly |
 | CI unsigned build | [Actions artifact `windows-unsigned`](https://github.com/AOwangjian/deepseek-harness-desktop/actions) | Packed on every `main` push; download from that run's Artifacts |
 
 The Windows packages are built on `windows-latest` by the [Release](https://github.com/AOwangjian/deepseek-harness-desktop/blob/main/.github/workflows/release.yml) workflow. You can also package locally with `npm run dist` / `npm run dist:portable`.
